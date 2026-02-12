@@ -69,12 +69,12 @@ def get_transaction(transaction_id: int, db: Session = Depends(get_db)):
     )
 
 
-@router.delete("/{transaction_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_transaction(transaction_id: int, db: Session = Depends(get_db)):
-    transaction = db.query(models.Transaction).filter(models.Transaction.id == transaction_id).first()
+@router.delete("/{transaction_id}")
+def delete_transaction(transaction_id: int, session: Session = Depends(get_session)):
+    transaction = session.get(models.Transaction, transaction_id)
     if transaction is None:
         raise HTTPException(status_code=404, detail="Transacao nao encontrada")
 
-    db.delete(transaction)
-    db.commit()
-    return None
+    session.delete(transaction)
+    session.commit()
+    return {"ok": True}
