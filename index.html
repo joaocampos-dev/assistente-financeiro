@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Meu Assistente Financeiro</title>
+    <style>
+        :root {
+            --bg: #f5f7fb;
+            --card: #ffffff;
+            --text: #1f2937;
+            --muted: #6b7280;
+            --border: #e5e7eb;
+            --primary: #2563eb;
+            --primary-hover: #1d4ed8;
+            --shadow: 0 10px 30px rgba(15, 23, 42, 0.08);
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            min-height: 100vh;
+            font-family: "Segoe UI", Roboto, Arial, sans-serif;
+            background: linear-gradient(180deg, #f8fafc 0%, var(--bg) 100%);
+            color: var(--text);
+        }
+
+        .container {
+            width: min(960px, 92%);
+            margin: 48px auto;
+        }
+
+        .card {
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            box-shadow: var(--shadow);
+            padding: 28px;
+        }
+
+        h1 {
+            margin: 0 0 24px;
+            font-size: 1.8rem;
+            letter-spacing: 0.2px;
+        }
+
+        .subtitle {
+            margin-top: -12px;
+            margin-bottom: 24px;
+            color: var(--muted);
+            font-size: 0.95rem;
+        }
+
+        form {
+            display: grid;
+            grid-template-columns: 1.5fr 1fr 1fr auto;
+            gap: 12px;
+            margin-bottom: 28px;
+        }
+
+        .field {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        label {
+            font-size: 0.88rem;
+            color: var(--muted);
+        }
+
+        input {
+            height: 42px;
+            padding: 0 12px;
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            outline: none;
+            font-size: 0.95rem;
+            transition: border-color 0.2s ease, box-shadow 0.2s ease;
+        }
+
+        input:focus {
+            border-color: var(--primary);
+            box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15);
+        }
+
+        button {
+            align-self: end;
+            height: 42px;
+            padding: 0 18px;
+            border: none;
+            border-radius: 10px;
+            background: var(--primary);
+            color: #fff;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background 0.2s ease, transform 0.05s ease;
+        }
+
+        button:hover {
+            background: var(--primary-hover);
+        }
+
+        button:active {
+            transform: translateY(1px);
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            overflow: hidden;
+            background: #fff;
+        }
+
+        thead {
+            background: #f9fafb;
+        }
+
+        th,
+        td {
+            text-align: left;
+            padding: 14px 16px;
+            border-bottom: 1px solid var(--border);
+            font-size: 0.94rem;
+        }
+
+        th {
+            color: #374151;
+            font-weight: 600;
+        }
+
+        tbody td {
+            color: var(--muted);
+        }
+
+        tbody tr:last-child td {
+            border-bottom: none;
+        }
+
+        .empty {
+            text-align: center;
+            padding: 26px 16px;
+            color: var(--muted);
+            font-style: italic;
+        }
+
+        @media (max-width: 840px) {
+            form {
+                grid-template-columns: 1fr;
+            }
+
+            button {
+                width: 100%;
+            }
+        }
+    </style>
+</head>
+<body>
+    <main class="container">
+        <section class="card">
+            <h1>Meu Assistente Financeiro</h1>
+            <p class="subtitle">Organize suas transacoes de forma simples.</p>
+
+            <form id="transaction-form">
+                <div class="field">
+                    <label for="description">Descricao</label>
+                    <input id="description" name="description" type="text" placeholder="Ex.: Mercado" required>
+                </div>
+
+                <div class="field">
+                    <label for="amount">Valor</label>
+                    <input id="amount" name="amount" type="number" step="0.01" placeholder="0,00" required>
+                </div>
+
+                <div class="field">
+                    <label for="category">Categoria</label>
+                    <input id="category" name="category" type="text" placeholder="Ex.: Alimentacao">
+                </div>
+
+                <button type="submit">Adicionar</button>
+            </form>
+
+            <table>
+                <thead>
+                    <tr>
+                        <th>Descricao</th>
+                        <th>Valor</th>
+                        <th>Categoria</th>
+                        <th>Data</th>
+                    </tr>
+                </thead>
+                <tbody id="transactions-body">
+                    <tr>
+                        <td class="empty" colspan="4">Nenhuma transacao cadastrada ainda.</td>
+                    </tr>
+                </tbody>
+            </table>
+        </section>
+    </main>
+    <script>
+        const API_URL = "/transactions/";
+        const form = document.getElementById("transaction-form");
+        const tbody = document.getElementById("transactions-body");
+
+        function formatAmount(value) {
+            return Number(value).toLocaleString("pt-BR", {
+                style: "currency",
+                currency: "BRL",
+            });
+        }
+
+        function formatDate(value) {
+            return new Date(value).toLocaleString("pt-BR");
+        }
+
+        function renderTransactions(transactions) {
+            if (!transactions.length) {
+                tbody.innerHTML = '<tr><td class="empty" colspan="4">Nenhuma transacao cadastrada ainda.</td></tr>';
+                return;
+            }
+
+            tbody.innerHTML = transactions
+                .map(
+                    (transaction) => `
+                        <tr>
+                            <td>${transaction.description}</td>
+                            <td>${formatAmount(transaction.amount)}</td>
+                            <td>${transaction.category ?? "-"}</td>
+                            <td>${formatDate(transaction.date_created)}</td>
+                        </tr>
+                    `
+                )
+                .join("");
+        }
+
+        async function loadTransactions() {
+            const response = await fetch(API_URL);
+            if (!response.ok) {
+                throw new Error("Nao foi possivel carregar as transacoes.");
+            }
+
+            const data = await response.json();
+            renderTransactions(data);
+        }
+
+        form.addEventListener("submit", async (event) => {
+            event.preventDefault();
+
+            const payload = {
+                description: form.description.value.trim(),
+                amount: Number(form.amount.value),
+                category: form.category.value.trim() || null,
+            };
+
+            try {
+                const response = await fetch(API_URL, {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json",
+                    },
+                    body: JSON.stringify(payload),
+                });
+
+                if (!response.ok) {
+                    throw new Error("Nao foi possivel adicionar a transacao.");
+                }
+
+                form.reset();
+                await loadTransactions();
+            } catch (error) {
+                alert(error.message);
+            }
+        });
+
+        window.addEventListener("DOMContentLoaded", async () => {
+            try {
+                await loadTransactions();
+            } catch (error) {
+                alert(error.message);
+            }
+        });
+    </script>
+</body>
+</html>
