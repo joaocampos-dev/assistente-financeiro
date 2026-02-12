@@ -84,6 +84,49 @@ def extract_transaction_details(user_text: str) -> dict:
         return default_data
 
 
+async def get_intent(user_message: str) -> str | None:
+    try:
+        client = openai.AsyncOpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
+        system_prompt = (
+            "Voce e um classificador de intencao para um assistente financeiro.\n"
+            "Classifique a mensagem do usuario em apenas uma das categorias:\n"
+            "- new_transaction\n"
+            "- query_transactions\n"
+            "Responda APENAS com JSON valido no formato exato:\n"
+            '{"intent": "new_transaction"}\n'
+            "ou\n"
+            '{"intent": "query_transactions"}\n'
+            "Nao inclua explicacoes, markdown ou texto adicional.\n"
+            "Exemplos:\n"
+            'Mensagem: "gastei 50 reais com o almoço" -> Resposta JSON: {"intent": "new_transaction"}\n'
+            'Mensagem: "quanto eu gastei hoje?" -> Resposta JSON: {"intent": "query_transactions"}\n'
+            'Mensagem: "recebi 1200 de um projeto" -> Resposta JSON: {"intent": "new_transaction"}\n'
+            'Mensagem: "liste minhas últimas 5 receitas" -> Resposta JSON: {"intent": "query_transactions"}'
+        )
+
+        response = await client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_message},
+            ],
+            temperature=0,
+        )
+
+        content = (response.choices[0].message.content or "").strip()
+        if content.startswith("```"):
+            content = content.replace("```json", "").replace("```", "").strip()
+
+        parsed = json.loads(content)
+        intent = parsed.get("intent")
+        if intent in {"new_transaction", "query_transactions"}:
+            return intent
+        return None
+    except Exception as error:
+        print(f"Erro ao classificar intencao com OpenAI: {error}")
+        return None
+
+
 def send_reply(to: str, message: str) -> None:
     zenvia_api_token = os.environ.get("ZENVIA_API_TOKEN")
     zenvia_sender_id = os.environ.get("ZENVIA_SENDER_ID")
@@ -143,31 +186,45 @@ async def webhook_zenvia(request: Request, session: Session = Depends(get_sessio
         visitor = message.get("visitor", {})
         visitor_name = visitor.get("name")
         contents = message.get("contents", [])
-        message_text = contents[0].get("text") if contents and isinstance(contents[0], dict) else None
-        transaction_data = extract_transaction_details(message_text or "")
-        transaction = models.Transaction(
-            tipo=transaction_data.get("tipo", ""),
-            valor=transaction_data.get("valor", 0.0),
-            descricao=transaction_data.get("descricao", ""),
-            categoria=transaction_data.get("categoria", ""),
-        )
-        session.add(transaction)
-        session.commit()
-        session.refresh(transaction)
-        confirmation_message = (
-            f"✅ Transacao registrada: {transaction.descricao} no valor de R$ {transaction.valor:.2f}."
-        )
-        send_reply(to=sender_number or "", message=confirmation_message)
+        user_message = contents[0].get("text") if contents and isinstance(contents[0], dict) else ""
+        intent = await get_intent(user_message)
 
-        print(f"MENSAGEM RECEBIDA DE: {visitor_name} ({sender_number})")
-        print(f"  -> Texto Original: '{message_text}'")
-        print("  --------------------")
-        print("  DADOS EXTRAIDOS DA TRANSACAO:")
-        print(f"  -> Tipo: {transaction_data.get('tipo')}")
-        print(f"  -> Valor: {transaction_data.get('valor')}")
-        print(f"  -> Descricao: {transaction_data.get('descricao')}")
-        print(f"  -> Categoria: {transaction_data.get('categoria')}")
-        print(f"  -> ID Salvo no Banco: {transaction.id}")
+        if intent == "new_transaction":
+            transaction_data = extract_transaction_details(user_message)
+            transaction = models.Transaction(
+                tipo=transaction_data.get("tipo", ""),
+                valor=transaction_data.get("valor", 0.0),
+                descricao=transaction_data.get("descricao", ""),
+                categoria=transaction_data.get("categoria", ""),
+            )
+            session.add(transaction)
+            session.commit()
+            session.refresh(transaction)
+            confirmation_message = (
+                f"✅ Transacao registrada: {transaction.descricao} no valor de R$ {transaction.valor:.2f}."
+            )
+            send_reply(to=sender_number or "", message=confirmation_message)
+
+            print(f"MENSAGEM RECEBIDA DE: {visitor_name} ({sender_number})")
+            print(f"  -> Texto Original: '{user_message}'")
+            print("  --------------------")
+            print("  DADOS EXTRAIDOS DA TRANSACAO:")
+            print(f"  -> Tipo: {transaction_data.get('tipo')}")
+            print(f"  -> Valor: {transaction_data.get('valor')}")
+            print(f"  -> Descricao: {transaction_data.get('descricao')}")
+            print(f"  -> Categoria: {transaction_data.get('categoria')}")
+            print(f"  -> ID Salvo no Banco: {transaction.id}")
+        elif intent == "query_transactions":
+            send_reply(
+                to=sender_number or "",
+                message="Entendi que você quer fazer uma consulta. Em breve poderei te ajudar com isso!",
+            )
+        else:
+            send_reply(
+                to=sender_number or "",
+                message="Desculpe, não consegui entender sua solicitação.",
+            )
+
         return {"status": "message processed successfully"}
     except Exception as error:
         print(f"Erro ao processar mensagem da Zenvia: {error}")
