@@ -1,11 +1,12 @@
 from datetime import datetime
+from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
-from sqlalchemy.orm import Session
+from sqlmodel import Session, select
 
-from database.database import get_db
-from database.models import Transaction
+from database import models
+from database.database import get_db, get_session
 
 router = APIRouter()
 
@@ -30,7 +31,7 @@ class TransactionResponse(BaseModel):
 
 @router.post("/", response_model=TransactionResponse, status_code=status.HTTP_201_CREATED)
 def create_transaction(payload: TransactionCreate, db: Session = Depends(get_db)):
-    transaction = Transaction(
+    transaction = models.Transaction(
         tipo=payload.tipo,
         valor=payload.amount,
         descricao=payload.description,
@@ -48,24 +49,15 @@ def create_transaction(payload: TransactionCreate, db: Session = Depends(get_db)
     )
 
 
-@router.get("/", response_model=list[TransactionResponse])
-def list_transactions(db: Session = Depends(get_db)):
-    transactions = db.query(Transaction).all()
-    return [
-        TransactionResponse(
-            id=transaction.id,
-            description=transaction.descricao,
-            amount=transaction.valor,
-            category=transaction.categoria,
-            date_created=transaction.data_criacao,
-        )
-        for transaction in transactions
-    ]
+@router.get("/", response_model=list[models.Transaction])
+def get_all_transactions(session: Session = Depends(get_session)) -> List[models.Transaction]:
+    transactions = session.exec(select(models.Transaction)).all()
+    return transactions
 
 
 @router.get("/{transaction_id}", response_model=TransactionResponse)
 def get_transaction(transaction_id: int, db: Session = Depends(get_db)):
-    transaction = db.query(Transaction).filter(Transaction.id == transaction_id).first()
+    transaction = db.query(models.Transaction).filter(models.Transaction.id == transaction_id).first()
     if transaction is None:
         raise HTTPException(status_code=404, detail="Transacao nao encontrada")
     return TransactionResponse(
@@ -79,7 +71,7 @@ def get_transaction(transaction_id: int, db: Session = Depends(get_db)):
 
 @router.delete("/{transaction_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_transaction(transaction_id: int, db: Session = Depends(get_db)):
-    transaction = db.query(Transaction).filter(Transaction.id == transaction_id).first()
+    transaction = db.query(models.Transaction).filter(models.Transaction.id == transaction_id).first()
     if transaction is None:
         raise HTTPException(status_code=404, detail="Transacao nao encontrada")
 

@@ -1,5 +1,6 @@
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, declarative_base, sessionmaker
+from sqlmodel import Session as SQLModelSession
 
 DATABASE_URL = "sqlite:///./assistente_financeiro.db"
 
@@ -17,3 +18,8 @@ def get_db():
         yield db
     finally:
         db.close()
+
+
+def get_session():
+    with SQLModelSession(engine) as session:
+        yield session
