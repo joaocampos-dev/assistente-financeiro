@@ -4,7 +4,7 @@ from datetime import datetime
 
 import openai
 import requests
-from fastapi import Depends, FastAPI, Request
+from fastapi import Depends, FastAPI, Request, Response
 from sqlmodel import SQLModel, Session, func, select
 from typing import Any
 
@@ -327,6 +327,9 @@ async def webhook_zenvia(request: Request, session: Session = Depends(get_sessio
         visitor_name = visitor.get("name")
         contents = message.get("contents", [])
         user_message = contents[0].get("text") if contents and isinstance(contents[0], dict) else ""
+        if not user_message:
+            print("Recebida mensagem vazia ou evento de status. Ignorando.")
+            return Response(status_code=200)
         intent = await get_intent(user_message)
 
         if intent == "new_transaction":
