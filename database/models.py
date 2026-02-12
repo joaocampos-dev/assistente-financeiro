@@ -1,13 +1,13 @@
-from sqlalchemy import Column, DateTime, Float, Integer, String, func
+from datetime import datetime
+from typing import Optional
 
-from database.database import Base
+from sqlmodel import Field, SQLModel
 
 
-class Transaction(Base):
-    __tablename__ = "transactions"
-
-    id = Column(Integer, primary_key=True, index=True)
-    description = Column(String, nullable=False)
-    amount = Column(Float, nullable=False)
-    category = Column(String, nullable=True)
-    date_created = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+class Transaction(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    tipo: str
+    valor: float
+    descricao: str
+    categoria: str
+    data_criacao: datetime = Field(default_factory=datetime.utcnow, nullable=False)

@@ -11,6 +11,7 @@ router = APIRouter()
 
 
 class TransactionCreate(BaseModel):
+    tipo: str = "despesa"
     description: str
     amount: float
     category: str | None = None
@@ -30,19 +31,36 @@ class TransactionResponse(BaseModel):
 @router.post("/", response_model=TransactionResponse, status_code=status.HTTP_201_CREATED)
 def create_transaction(payload: TransactionCreate, db: Session = Depends(get_db)):
     transaction = Transaction(
-        description=payload.description,
-        amount=payload.amount,
-        category=payload.category,
+        tipo=payload.tipo,
+        valor=payload.amount,
+        descricao=payload.description,
+        categoria=payload.category or "Sem categoria",
     )
     db.add(transaction)
     db.commit()
     db.refresh(transaction)
-    return transaction
+    return TransactionResponse(
+        id=transaction.id,
+        description=transaction.descricao,
+        amount=transaction.valor,
+        category=transaction.categoria,
+        date_created=transaction.data_criacao,
+    )
 
 
 @router.get("/", response_model=list[TransactionResponse])
 def list_transactions(db: Session = Depends(get_db)):
-    return db.query(Transaction).all()
+    transactions = db.query(Transaction).all()
+    return [
+        TransactionResponse(
+            id=transaction.id,
+            description=transaction.descricao,
+            amount=transaction.valor,
+            category=transaction.categoria,
+            date_created=transaction.data_criacao,
+        )
+        for transaction in transactions
+    ]
 
 
 @router.get("/{transaction_id}", response_model=TransactionResponse)
@@ -50,7 +68,13 @@ def get_transaction(transaction_id: int, db: Session = Depends(get_db)):
     transaction = db.query(Transaction).filter(Transaction.id == transaction_id).first()
     if transaction is None:
         raise HTTPException(status_code=404, detail="Transacao nao encontrada")
-    return transaction
+    return TransactionResponse(
+        id=transaction.id,
+        description=transaction.descricao,
+        amount=transaction.valor,
+        category=transaction.categoria,
+        date_created=transaction.data_criacao,
+    )
 
 
 @router.delete("/{transaction_id}", status_code=status.HTTP_204_NO_CONTENT)
