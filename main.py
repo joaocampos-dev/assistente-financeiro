@@ -12,6 +12,8 @@ from database import models
 from database.database import engine
 from routers.transactions import router as transactions_router
 
+INTENT_CACHE = {}
+
 SQLModel.metadata.create_all(bind=engine)
 
 app = FastAPI(title="Assistente Financeiro")
@@ -86,43 +88,47 @@ def extract_transaction_details(user_text: str) -> dict:
 
 
 async def get_intent(user_message: str) -> str | None:
-    try:
-        client = openai.AsyncOpenAI(api_key=os.environ.get("OPENAI_API_KEY"), timeout=30.0)
-        system_prompt = (
-            "Voce e um classificador de intencao para um assistente financeiro.\n"
-            "Classifique a mensagem do usuario em apenas uma das categorias:\n"
-            "- new_transaction\n"
-            "- query_transactions\n"
-            "Responda APENAS com JSON valido no formato exato:\n"
-            '{"intent": "new_transaction"}\n'
-            "ou\n"
-            '{"intent": "query_transactions"}\n'
-            "Nao inclua explicacoes, markdown ou texto adicional.\n"
-            "Exemplos:\n"
-            'Mensagem: "gastei 50 reais com o almoço" -> Resposta JSON: {"intent": "new_transaction"}\n'
-            'Mensagem: "quanto eu gastei hoje?" -> Resposta JSON: {"intent": "query_transactions"}\n'
-            'Mensagem: "recebi 1200 de um projeto" -> Resposta JSON: {"intent": "new_transaction"}\n'
-            'Mensagem: "liste minhas últimas 5 receitas" -> Resposta JSON: {"intent": "query_transactions"}'
-        )
+    """
+    Classifica a intenção do usuário a partir da mensagem.
+    Usa um cache em memória para evitar chamadas repetidas à API.
+    """
+    # Normaliza a mensagem para que "Oi" e "oi" sejam a mesma chave no cache
+    cache_key = user_message.strip().lower()
 
+    # 1. Verifica se a intenção para esta mensagem já está no cache
+    if cache_key in INTENT_CACHE:
+        print(f"Cache HIT para a intenção da mensagem: '{user_message}'")
+        return INTENT_CACHE[cache_key]
+
+    print(f"Cache MISS para a intenção da mensagem: '{user_message}'. Chamando a API.")
+    # 2. Se não estiver no cache, aí sim chama a API da OpenAI
+    try:
+        client = openai.AsyncOpenAI(
+            api_key=os.environ.get("OPENAI_API_KEY"),
+            timeout=30.0
+        )
         response = await client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
-                {"role": "system", "content": system_prompt},
+                {
+                    "role": "system",
+                    "content": """
+                        Você é um classificador de intenções para um chatbot de finanças.
+                        Responda apenas com uma das seguintes opções:
+                        - "new_transaction": para registrar uma nova despesa ou receita (ex: "gastei 50 reais", "recebi 300 de um freela").
+                        - "query_transactions": para fazer uma pergunta ou consulta sobre os dados (ex: "quanto gastei hoje?", "liste minhas últimas 3 despesas").
+                        - "unknown": se a mensagem do usuário não se encaixa em nenhuma das anteriores.
+                    """,
+                },
                 {"role": "user", "content": user_message},
             ],
-            temperature=0,
+            temperature=0.0,
         )
+        intent = response.choices[0].message.content or "unknown"
 
-        content = (response.choices[0].message.content or "").strip()
-        if content.startswith("```"):
-            content = content.replace("```json", "").replace("```", "").strip()
-
-        parsed = json.loads(content)
-        intent = parsed.get("intent")
-        if intent in {"new_transaction", "query_transactions"}:
-            return intent
-        return None
+        # 3. Salva a nova intenção no cache para uso futuro antes de retornar
+        INTENT_CACHE[cache_key] = intent
+        return intent
     except Exception as error:
         print(f"Erro ao classificar intencao com OpenAI: {error}")
         return None
