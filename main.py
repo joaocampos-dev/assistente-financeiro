@@ -215,6 +215,7 @@ async def analyze_query(user_message: str) -> dict | None:
 def query_database(query_plan: dict, session: Session) -> Any:
     """
     Executa uma consulta no banco de dados com base em um plano gerado pela IA.
+    VERSÃO CORRIGIDA para lidar com datas corretamente.
     """
     filters_data = query_plan.get("filters", {})
     aggregation = query_plan.get("aggregation")
@@ -228,16 +229,20 @@ def query_database(query_plan: dict, session: Session) -> Any:
 
     # Aplica os filtros dinamicamente
     for key, value in filters_data.items():
+        # A função func.date() extrai apenas a data (ignora a hora/fuso)
+        # tanto da coluna do banco quanto do valor do filtro.
+        # Isso resolve o problema de fuso horário.
         if key == "date_start":
-            statement = statement.where(models.Transaction.data_criacao >= datetime.fromisoformat(value))
+            start_date = datetime.fromisoformat(value).date()
+            statement = statement.where(func.date(models.Transaction.data_criacao) >= start_date)
         elif key == "date_end":
-            # Adiciona 1 dia para incluir o dia inteiro na consulta
-            end_date = datetime.fromisoformat(value).replace(hour=23, minute=59, second=59)
-            statement = statement.where(models.Transaction.data_criacao <= end_date)
+            end_date = datetime.fromisoformat(value).date()
+            statement = statement.where(func.date(models.Transaction.data_criacao) <= end_date)
         elif key == "tipo":
             statement = statement.where(models.Transaction.tipo == value)
         elif key == "categoria":
-            statement = statement.where(models.Transaction.categoria == value)
+            # Usamos .ilike() para busca case-insensitive (ignora maiúsculas/minúsculas)
+            statement = statement.where(models.Transaction.categoria.ilike(f"%%{value}%%"))
 
     # Aplica ordenação e limite para listagens
     if aggregation == "list":
@@ -249,7 +254,6 @@ def query_database(query_plan: dict, session: Session) -> Any:
     results = session.exec(statement)
 
     if aggregation == "sum":
-        # .one_or_none() retorna o valor ou None se não houver resultado
         return results.one_or_none() or 0.0
     else:  # "list"
         return results.all()
