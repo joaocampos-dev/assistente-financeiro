@@ -1,10 +1,11 @@
 import json
 import os
+from datetime import datetime
 
 import openai
 import requests
 from fastapi import Depends, FastAPI, Request
-from sqlmodel import SQLModel, Session
+from sqlmodel import SQLModel, Session, func, select
 from typing import Any
 
 from database import models
@@ -160,6 +161,100 @@ def send_reply(to: str, message: str) -> None:
         print(f"Erro ao enviar resposta para {to}: {error}")
 
 
+async def analyze_query(user_message: str) -> dict | None:
+    """
+    Usa a OpenAI para analisar uma pergunta do usuário e extrair parâmetros
+    estruturados para uma consulta ao banco de dados.
+    """
+    try:
+        client = openai.AsyncOpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
+        # Note o uso de ''' para um bloco de texto grande.
+        # Dentro dele, aspas duplas " podem ser usadas normalmente.
+        system_prompt = '''
+        Você é um especialista em análise de queries para um banco de dados de finanças.
+        A data de hoje é 12 de Fevereiro de 2026.
+        Sua tarefa é analisar a pergunta do usuário e retornar APENAS um objeto JSON com um plano de consulta.
+
+        As chaves JSON possíveis são:
+        - "aggregation": Obrigatória. Pode ser "sum" ou "list".
+        - "filters": Um objeto com filtros opcionais.
+        - "limit": Um número, se o usuário pedir um limite (ex: "últimas 5").
+
+        Os filtros possíveis dentro de "filters" são:
+        - "date_start" e "date_end": Datas no formato "YYYY-MM-DD".
+        - "tipo": "receita" ou "despesa".
+        - "categoria": Uma categoria financeira comum.
+
+        Exemplos de conversão de pergunta para JSON:
+        - Pergunta: "quanto gastei hoje?" -> Resposta: {"aggregation": "sum", "filters": {"tipo": "despesa", "date_start": "2026-02-12", "date_end": "2026-02-12"}}
+        - Pergunta: "listar minhas receitas de fevereiro" -> Resposta: {"aggregation": "list", "filters": {"tipo": "receita", "date_start": "2026-02-01", "date_end": "2026-02-28"}}
+        - Pergunta: "total de despesas com alimentação este mês" -> Resposta: {"aggregation": "sum", "filters": {"tipo": "despesa", "categoria": "Alimentacao", "date_start": "2026-02-01", "date_end": "2026-02-28"}}
+        - Pergunta: "últimas 3 transações" -> Resposta: {"aggregation": "list", "filters": {}, "limit": 3}
+        - Pergunta: "quais foram minhas receitas?" -> Resposta: {"aggregation": "list", "filters": {"tipo": "receita"}}
+        '''
+
+        response = await client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_message},
+            ],
+            temperature=0,
+            # Forçar a resposta em formato JSON é mais confiável
+            response_format={"type": "json_object"},
+        )
+
+        content = (response.choices[0].message.content or "").strip()
+        return json.loads(content)
+
+    except Exception as error:
+        print(f"Erro ao analisar query com OpenAI: {error}")
+        return None
+
+
+def query_database(query_plan: dict, session: Session) -> Any:
+    """
+    Executa uma consulta no banco de dados com base em um plano gerado pela IA.
+    """
+    filters_data = query_plan.get("filters", {})
+    aggregation = query_plan.get("aggregation")
+    limit = query_plan.get("limit")
+
+    # Define a base da consulta
+    if aggregation == "sum":
+        statement = select(func.sum(models.Transaction.valor))
+    else:  # "list"
+        statement = select(models.Transaction)
+
+    # Aplica os filtros dinamicamente
+    for key, value in filters_data.items():
+        if key == "date_start":
+            statement = statement.where(models.Transaction.data_criacao >= datetime.fromisoformat(value))
+        elif key == "date_end":
+            # Adiciona 1 dia para incluir o dia inteiro na consulta
+            end_date = datetime.fromisoformat(value).replace(hour=23, minute=59, second=59)
+            statement = statement.where(models.Transaction.data_criacao <= end_date)
+        elif key == "tipo":
+            statement = statement.where(models.Transaction.tipo == value)
+        elif key == "categoria":
+            statement = statement.where(models.Transaction.categoria == value)
+
+    # Aplica ordenação e limite para listagens
+    if aggregation == "list":
+        statement = statement.order_by(models.Transaction.data_criacao.desc())
+        if limit:
+            statement = statement.limit(limit)
+
+    # Executa a consulta
+    results = session.exec(statement)
+
+    if aggregation == "sum":
+        # .one_or_none() retorna o valor ou None se não houver resultado
+        return results.one_or_none() or 0.0
+    else:  # "list"
+        return results.all()
+
+
 @app.get("/")
 def read_root() -> dict[str, str]:
     return {"message": "API do Assistente Financeiro no ar!"}
@@ -215,10 +310,18 @@ async def webhook_zenvia(request: Request, session: Session = Depends(get_sessio
             print(f"  -> Categoria: {transaction_data.get('categoria')}")
             print(f"  -> ID Salvo no Banco: {transaction.id}")
         elif intent == "query_transactions":
-            send_reply(
-                to=sender_number or "",
-                message="Entendi que você quer fazer uma consulta. Em breve poderei te ajudar com isso!",
-            )
+            query_plan = await analyze_query(user_message)
+            if query_plan is not None:
+                results = query_database(query_plan, session)
+                send_reply(
+                    to=sender_number or "",
+                    message=f"Plano: {query_plan}\n\nResultado: {results}",
+                )
+            else:
+                send_reply(
+                    to=sender_number or "",
+                    message="Não consegui entender sua pergunta.",
+                )
         else:
             send_reply(
                 to=sender_number or "",
