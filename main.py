@@ -4,7 +4,7 @@ from datetime import datetime
 
 import openai
 import requests
-from fastapi import Depends, FastAPI, Request, Response
+from fastapi import FastAPI, Request, Response, BackgroundTasks
 from sqlmodel import SQLModel, Session, func, select
 from typing import Any
 
@@ -316,68 +316,64 @@ def receive_zenvia_webhook(payload: dict[str, Any]) -> dict[str, str]:
     return {"status": "received"}
 
 
+async def process_message(sender_number: str, user_message: str):
+    """
+    Esta função faz todo o trabalho pesado em segundo plano.
+    """
+    print(f"Processando em segundo plano a mensagem: '{user_message}'")
+    with Session(engine) as session:
+        try:
+            intent = await get_intent(user_message)
+            reply_message = f"Desculpe, não consegui entender sua solicitação. A intenção foi: {intent}"
+
+            if intent == "new_transaction":
+                details = extract_transaction_details(user_message)
+
+                nova_transacao = models.Transaction(
+                    descricao=details.get("descricao", "não identificado"),
+                    valor=details.get("valor", 0.0),
+                    tipo=details.get("tipo", "despesa"),
+                    categoria=details.get("categoria", "Outros"),
+                )
+                session.add(nova_transacao)
+                session.commit()
+                session.refresh(nova_transacao)
+
+                reply_message = (
+                    f"✅ Transacao registrada: {nova_transacao.descricao} no valor de R$ {nova_transacao.valor:.2f}."
+                )
+
+            elif intent == "query_transactions":
+                query_plan = await analyze_query(user_message)
+                if not query_plan:
+                    reply_message = "Não consegui entender sua pergunta."
+                else:
+                    results = query_database(query_plan, session)
+                    reply_message = format_query_results(query_plan, results)
+
+            send_reply(sender_number or "", reply_message)
+        except Exception as error:
+            print(f"Erro no processamento em segundo plano: {error}")
+            send_reply(sender_number or "", "Ocorreu um erro inesperado ao processar sua mensagem.")
+
+
 @app.post("/webhook/zenvia")
-async def webhook_zenvia(request: Request, session: Session = Depends(get_session)) -> dict[str, str]:
+async def webhook_zenvia(request: Request, background_tasks: BackgroundTasks):
     try:
         body = await request.json()
-        message = body.get("message", {})
+        sender_number = body.get("message", {}).get("from")
+        user_message = body.get("message", {}).get("contents", [{}])[0].get("text", "").strip()
 
-        sender_number = message.get("from")
-        visitor = message.get("visitor", {})
-        visitor_name = visitor.get("name")
-        contents = message.get("contents", [])
-        user_message = contents[0].get("text") if contents and isinstance(contents[0], dict) else ""
         if not user_message:
             print("Recebida mensagem vazia ou evento de status. Ignorando.")
             return Response(status_code=200)
-        intent = await get_intent(user_message)
 
-        if intent == "new_transaction":
-            transaction_data = extract_transaction_details(user_message)
-            transaction = models.Transaction(
-                tipo=transaction_data.get("tipo", ""),
-                valor=transaction_data.get("valor", 0.0),
-                descricao=transaction_data.get("descricao", ""),
-                categoria=transaction_data.get("categoria", ""),
-            )
-            session.add(transaction)
-            session.commit()
-            session.refresh(transaction)
-            confirmation_message = (
-                f"✅ Transacao registrada: {transaction.descricao} no valor de R$ {transaction.valor:.2f}."
-            )
-            send_reply(to=sender_number or "", message=confirmation_message)
+        # Adiciona a tarefa pesada para ser executada em segundo plano
+        background_tasks.add_task(process_message, sender_number, user_message)
 
-            print(f"MENSAGEM RECEBIDA DE: {visitor_name} ({sender_number})")
-            print(f"  -> Texto Original: '{user_message}'")
-            print("  --------------------")
-            print("  DADOS EXTRAIDOS DA TRANSACAO:")
-            print(f"  -> Tipo: {transaction_data.get('tipo')}")
-            print(f"  -> Valor: {transaction_data.get('valor')}")
-            print(f"  -> Descricao: {transaction_data.get('descricao')}")
-            print(f"  -> Categoria: {transaction_data.get('categoria')}")
-            print(f"  -> ID Salvo no Banco: {transaction.id}")
-        elif intent == "query_transactions":
-            query_plan = await analyze_query(user_message)
-            if query_plan is not None:
-                results = query_database(query_plan, session)
-                reply_message = format_query_results(query_plan, results)
-                send_reply(
-                    to=sender_number or "",
-                    message=reply_message,
-                )
-            else:
-                send_reply(
-                    to=sender_number or "",
-                    message="Não consegui entender sua pergunta.",
-                )
-        else:
-            send_reply(
-                to=sender_number or "",
-                message="Desculpe, não consegui entender sua solicitação.",
-            )
-
-        return {"status": "message processed successfully"}
+        # Retorna 'OK' imediatamente para o Zenvia não reenviar a mensagem
+        print(f"Webhook recebido. Adicionando '{user_message}' ao processamento em segundo plano.")
+        return Response(status_code=200)
     except Exception as error:
-        print(f"Erro ao processar mensagem da Zenvia: {error}")
-        return {"status": "error processing message"}
+        print(f"Erro crítico no webhook: {error}")
+        return Response(status_code=500)
