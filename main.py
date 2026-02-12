@@ -2,6 +2,7 @@ import json
 import os
 
 import openai
+import requests
 from fastapi import Depends, FastAPI, Request
 from sqlmodel import SQLModel, Session
 from typing import Any
@@ -83,6 +84,39 @@ def extract_transaction_details(user_text: str) -> dict:
         return default_data
 
 
+def send_reply(to: str, message: str) -> None:
+    zenvia_api_token = os.environ.get("ZENVIA_API_TOKEN")
+    zenvia_sender_id = os.environ.get("ZENVIA_SENDER_ID")
+    url = "https://api.zenvia.com/v2/channels/whatsapp/messages"
+
+    if not zenvia_api_token or not zenvia_sender_id:
+        print("Erro ao enviar resposta: variaveis ZENVIA_API_TOKEN ou ZENVIA_SENDER_ID nao configuradas.")
+        return
+
+    headers = {
+        "Content-Type": "application/json",
+        "X-API-TOKEN": zenvia_api_token,
+    }
+
+    data = {
+        "from": zenvia_sender_id,
+        "to": to,
+        "contents": [
+            {
+                "type": "text",
+                "text": message,
+            }
+        ],
+    }
+
+    try:
+        response = requests.post(url, headers=headers, json=data, timeout=15)
+        response.raise_for_status()
+        print(f"Resposta enviada com sucesso para {to}. Status: {response.status_code}")
+    except requests.RequestException as error:
+        print(f"Erro ao enviar resposta para {to}: {error}")
+
+
 @app.get("/")
 def read_root() -> dict[str, str]:
     return {"message": "API do Assistente Financeiro no ar!"}
@@ -120,6 +154,10 @@ async def webhook_zenvia(request: Request, session: Session = Depends(get_sessio
         session.add(transaction)
         session.commit()
         session.refresh(transaction)
+        confirmation_message = (
+            f"✅ Transacao registrada: {transaction.descricao} no valor de R$ {transaction.valor:.2f}."
+        )
+        send_reply(to=sender_number or "", message=confirmation_message)
 
         print(f"MENSAGEM RECEBIDA DE: {visitor_name} ({sender_number})")
         print(f"  -> Texto Original: '{message_text}'")
