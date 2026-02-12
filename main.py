@@ -1,4 +1,3 @@
-import json
 from fastapi import FastAPI, Request
 from typing import Any
 
@@ -31,10 +30,22 @@ def receive_zenvia_webhook(payload: dict[str, Any]) -> dict[str, str]:
 
 @app.post("/webhook/zenvia")
 async def webhook_zenvia(request: Request) -> dict[str, str]:
-    body = await request.json()
+    try:
+        body = await request.json()
+        message = body.get("message", {})
 
-    print("========== MENSAGEM RECEBIDA DA ZENVIA ==========")
-    print(json.dumps(body, indent=2, ensure_ascii=False))
-    print("==================================================")
+        sender_number = message.get("from")
+        visitor = message.get("visitor", {})
+        visitor_name = visitor.get("name")
+        contents = message.get("contents", [])
+        message_text = contents[0].get("text") if contents and isinstance(contents[0], dict) else None
 
-    return {"status": "message received successfully"}
+        print("========== MENSAGEM PROCESSADA DA ZENVIA ==========")
+        print(f"Nome: {visitor_name}")
+        print(f"Numero: {sender_number}")
+        print(f"Texto: {message_text}")
+        print("====================================================")
+        return {"status": "message processed successfully"}
+    except Exception as error:
+        print(f"Erro ao processar mensagem da Zenvia: {error}")
+        return {"status": "error processing message"}
