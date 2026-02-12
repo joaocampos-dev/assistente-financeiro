@@ -12,6 +12,16 @@ app = FastAPI(title="Assistente Financeiro")
 app.include_router(transactions_router, prefix="/transactions", tags=["Transactions"])
 
 
+def extract_transaction_details(user_text: str) -> dict:
+    # Simulacao (mock): no futuro esta funcao sera substituida por uma chamada real a uma API de LLM.
+    return {
+        "tipo": "receita",
+        "valor": 1500.00,
+        "descricao": "salario",
+        "categoria": "Salario",
+    }
+
+
 @app.get("/")
 def read_root() -> dict[str, str]:
     return {"message": "API do Assistente Financeiro no ar!"}
@@ -39,12 +49,16 @@ async def webhook_zenvia(request: Request) -> dict[str, str]:
         visitor_name = visitor.get("name")
         contents = message.get("contents", [])
         message_text = contents[0].get("text") if contents and isinstance(contents[0], dict) else None
+        transaction_data = extract_transaction_details(message_text or "")
 
-        print("========== MENSAGEM PROCESSADA DA ZENVIA ==========")
-        print(f"Nome: {visitor_name}")
-        print(f"Numero: {sender_number}")
-        print(f"Texto: {message_text}")
-        print("====================================================")
+        print(f"MENSAGEM RECEBIDA DE: {visitor_name} ({sender_number})")
+        print(f"  -> Texto Original: '{message_text}'")
+        print("  --------------------")
+        print("  DADOS EXTRAIDOS DA TRANSACAO:")
+        print(f"  -> Tipo: {transaction_data.get('tipo')}")
+        print(f"  -> Valor: {transaction_data.get('valor')}")
+        print(f"  -> Descricao: {transaction_data.get('descricao')}")
+        print(f"  -> Categoria: {transaction_data.get('categoria')}")
         return {"status": "message processed successfully"}
     except Exception as error:
         print(f"Erro ao processar mensagem da Zenvia: {error}")
