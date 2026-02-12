@@ -33,7 +33,7 @@ def extract_transaction_details(user_text: str) -> dict:
     }
 
     try:
-        client = openai.OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
+        client = openai.OpenAI(api_key=os.environ.get("OPENAI_API_KEY"), timeout=30.0)
         system_prompt = (
             "Voce e um assistente financeiro especializado em extrair dados de transacoes.\n"
             "Sua unica funcao e ler a mensagem do usuario e responder APENAS com um JSON valido.\n"
@@ -87,7 +87,7 @@ def extract_transaction_details(user_text: str) -> dict:
 
 async def get_intent(user_message: str) -> str | None:
     try:
-        client = openai.AsyncOpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
+        client = openai.AsyncOpenAI(api_key=os.environ.get("OPENAI_API_KEY"), timeout=30.0)
         system_prompt = (
             "Voce e um classificador de intencao para um assistente financeiro.\n"
             "Classifique a mensagem do usuario em apenas uma das categorias:\n"
@@ -167,7 +167,7 @@ async def analyze_query(user_message: str) -> dict | None:
     estruturados para uma consulta ao banco de dados.
     """
     try:
-        client = openai.AsyncOpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
+        client = openai.AsyncOpenAI(api_key=os.environ.get("OPENAI_API_KEY"), timeout=30.0)
         # Note o uso de ''' para um bloco de texto grande.
         # Dentro dele, aspas duplas " podem ser usadas normalmente.
         system_prompt = '''
