@@ -212,6 +212,41 @@ async def analyze_query(user_message: str) -> dict | None:
         return None
 
 
+def format_query_results(query_plan: dict, results: Any) -> str:
+    """
+    Formata os resultados da consulta do banco de dados em uma string amigável.
+    """
+    aggregation = query_plan.get("aggregation")
+    filters = query_plan.get("filters", {})
+
+    if aggregation == "sum":
+        total = results if isinstance(results, float) else 0.0
+
+        # Constrói a resposta baseada nos filtros usados
+        tipo = filters.get("tipo", "transações")
+        categoria = filters.get("categoria")
+
+        if categoria:
+            return f"O total de {tipo} com '{categoria}' é de R$ {total:.2f}."
+        else:
+            return f"O total de {tipo} consultadas é de R$ {total:.2f}."
+
+    elif aggregation == "list":
+        if not results:
+            return "Nenhuma transação encontrada para sua busca."
+
+        # Monta uma lista de texto com as transações
+        transaction_lines = [
+            f"- {t.descricao}: R$ {t.valor:.2f} ({t.data_criacao.strftime('%d/%m')})"
+            for t in results
+        ]
+
+        header = "Aqui estão as transações que encontrei:"
+        return f"{header}\n\n" + "\n".join(transaction_lines)
+
+    return "Não consegui formatar a sua resposta."
+
+
 def query_database(query_plan: dict, session: Session) -> Any:
     """
     Executa uma consulta no banco de dados com base em um plano gerado pela IA.
@@ -317,9 +352,10 @@ async def webhook_zenvia(request: Request, session: Session = Depends(get_sessio
             query_plan = await analyze_query(user_message)
             if query_plan is not None:
                 results = query_database(query_plan, session)
+                reply_message = format_query_results(query_plan, results)
                 send_reply(
                     to=sender_number or "",
-                    message=f"Plano: {query_plan}\n\nResultado: {results}",
+                    message=reply_message,
                 )
             else:
                 send_reply(
